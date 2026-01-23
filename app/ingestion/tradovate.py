@@ -12,7 +12,7 @@ body = {
     "appVersion": "1.0",
     "cid": 8,
     "deviceId": "test-device-123",
-    "sec": "test-sec-456"
+    "sec": "test-sec-456"   
 }
 
 response = requests.post(url, headers=headers, json=body)

@@ -2,8 +2,10 @@ from flask import Flask, request, jsonify
 from app.db.models import db
 from app.api.trades import trade_bp
 from app.api.pnl import pnl_bp
+from flask_cors import CORS
 
 app = Flask(__name__)
+CORS(app)
 
 # database configs
 app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://desmondjung@localhost/trading_journal'
