@@ -118,8 +118,24 @@ def get_orders_list(ord_status = None):
  
     import json
     data = response.json()
-    print(json.dumps(data[-1]))
-    
+    print(json.dumps(data[-3:]))
+
+def get_order_item(order_id):
+    headers = get_headers()
+    url = 'https://demo.tradovateapi.com/v1/order/item'
+
+    params = {
+        id = order_id
+    }
+
+    response = requests.get(url, headers=headers, params=params)
+
+    if response.status_code != 200:
+        print("Error:", response.text)
+        return None
+ 
+    import json
+    data = response.json()
 
 def get_filled_orders():
     # Return only orders that have fills. Call get_orders(ord_status="Filled") and return that list (or thin wrapper). Used so we only fetch fills for orders that can have them.
@@ -132,7 +148,43 @@ def parse_order_relationships(order):
 
 def build_bracket_oco_groups(orders):
     # Take the full list of orders from order/list. Group by parentId (brackets) and by ocoId (OCO). Return a dict: key = group identifier (e.g. "parent:<id>" or "oco:<id>" or "standalone:<id>"), value = list of order IDs in that group. Used so we know which order IDs belong together for fetching fills and pairing entry/exi
-    return None
+    
+    if not orders:
+        return {}
+    
+    order_ids = {o.get("id") for o in orders if o.get("id") is not None}
+    by_parent = {}
+    by_oco = {}
+    standalones = []
+
+    for order in orders:
+        oid = order.get("id")
+        if oid is None:
+            continue
+        parent_id = order.get("parentId")
+        oco_id = order.get("ocoId")
+
+        if parent_id is not None:
+            by_parent.setdefault(parent_id, []).append(oid)
+        if oco_id is not None:
+            by_oco.setdefault(oco_id, []).append(oid)
+        if parent_id is not None and oco_id is not None:
+            standalones.append(oid)
+
+    groups = {}
+    for parent_id, child_ids in by_parent.items():
+        ids = list(child_ids)
+        if parent_id in order_ids and parent_id not in ids:
+            ids.insert(0, parent_id)
+        groups[f"parent:{parent_id}"] = ids
+
+    for oco_id, ids in by_oco.items():
+        groups[f"oco:{oco_id}"] = list(dict.fromkeys(ids))
+
+    for oid in standalones:
+        groups[f"standalone:{oid}"] = [oid]
+
+    return groups
 
 def get_fills_by_order_ids(order_ids: int):
     # Given a list of order IDs (e.g. from one bracket/OCO group), return a dict order_id -> list of fills. Either call get_fill_dependents(order_id) for each ID, or call get_fills() once and filter by orderId in that list. Used to gather all fills for a group before pairing entry/exit.
