@@ -71,3 +71,52 @@ def get_daily_pnl():
 
     except Exception as e:
         return jsonify({'error': f'Failed to calculate daily PnL: {str(e)}'}), 500
+
+@pnl_bp.route('/api/trades/calendar', methods=['GET'])
+def get_calendar_trades():
+    """
+    Get trades grouped by date for calendar display.
+    Only returns matched trades (from trades table).
+    """
+    from app.db.models import Trade
+    from datetime import datetime
+    
+    year = request.args.get('year', type=int)
+    month = request.args.get('month', type=int)
+    
+    # Query trades (not orders)
+    query = Trade.query
+    
+    if year and month:
+        start_date = datetime(year, month, 1)
+        if month == 12:
+            end_date = datetime(year + 1, 1, 1)
+        else:
+            end_date = datetime(year, month + 1, 1)
+        
+        # Filter by exit_time (trades are closed on exit date)
+        query = query.filter(
+            Trade.exit_time >= start_date,
+            Trade.exit_time < end_date
+        )
+    
+    trades = query.order_by(Trade.exit_time).all()
+    
+    # Group by date
+    daily_data = {}
+    for trade in trades:
+        date_str = trade.exit_time.date().isoformat()  # Use exit date
+        
+        if date_str not in daily_data:
+            daily_data[date_str] = {
+                'date': date_str,
+                'pnl': 0.0,
+                'trades': []
+            }
+        
+        daily_data[date_str]['pnl'] += float(trade.pnl)
+        daily_data[date_str]['trades'].append(trade.to_dict())
+    
+    return jsonify({
+        'data': list(daily_data.values())
+    })
