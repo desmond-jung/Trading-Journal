@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
 import uuid
 from typing import Any, List, Dict, Optional
@@ -246,31 +247,59 @@ def save_raw_orders_to_db(csv_text: str, account: str = "default") -> tuple[List
     saved_orders = []
     errors = []
 
+    def _stable_row_id(row: Dict[str, str]) -> str:
+        """
+        Orders.csv sometimes has non-unique orderId values due to scientific notation
+        (e.g. 3.72955E+11). To make imports idempotent and avoid collisions, we use a
+        deterministic hash of the row contents as the primary key.
+        """
+        # Sort keys for deterministic hashing
+        normalized_items = []
+        for k in sorted(row.keys()):
+            v = row.get(k)
+            normalized_items.append(f"{k}={'' if v is None else str(v).strip()}")
+        payload = "|".join(normalized_items).encode("utf-8")
+        return "ord-" + hashlib.sha1(payload).hexdigest()[:24]
+
+    def _parse_datetime_maybe(value: Optional[str]) -> Optional[datetime]:
+        if not value:
+            return None
+        s = str(value).strip()
+        # Try a few known formats from your Orders.csv
+        fmts = [
+            "%m/%d/%y %H:%M",
+            "%m/%d/%y %H:%M:%S",
+            "%m/%d/%Y %H:%M",
+            "%m/%d/%Y %H:%M:%S",
+        ]
+        for fmt in fmts:
+            try:
+                return datetime.strptime(s, fmt)
+            except ValueError:
+                continue
+        # Fall back: ISO-ish
+        try:
+            return datetime.fromisoformat(s)
+        except Exception:
+            return None
+
     for row_num, row in enumerate(rows, start = 2):
         try:
-            order_id = row.get('orderId') or row.get('Order ID') or row.get('order_id')
-            if not order_id:
-                order_id = f"order-{uuid.uuid4().hex[:12]}"
+            raw_order_id = row.get("orderId") or row.get("Order ID") or row.get("order_id")
+            raw_order_id = str(raw_order_id).strip() if raw_order_id is not None else None
+
+            # Primary key for our DB row (stable per unique row)
+            order_row_id = _stable_row_id(row)
             
             # Check if order already exists (idempotency)
-            existing = Order.query.filter_by(id=order_id).first()
+            existing = Order.query.filter_by(id=order_row_id).first()
             if existing:
-                errors.append(f"Row {row_num}: Order {order_id} already exists, skipping")
+                errors.append(f"Row {row_num}: Order row already exists, skipping")
                 continue
             
             # Parse fill time
-            fill_time = None
-            fill_time_str = row.get('Fill Time') or row.get('fill_time') or row.get('Timestamp')
-            if fill_time_str:
-                try:
-                    # Handle format: "01/15/2026 07:40:22"
-                    fill_time = datetime.strptime(fill_time_str, '%m/%d/%Y %H:%M:%S')
-                except:
-                    try:
-                        # Try ISO format as fallback
-                        fill_time = datetime.fromisoformat(fill_time_str)
-                    except:
-                        pass  # Leave as None if can't parse
+            fill_time_str = row.get("Fill Time") or row.get("fill_time") or row.get("Timestamp")
+            fill_time = _parse_datetime_maybe(fill_time_str)
             
             # Determine status flags
             status = row.get('Status', '').strip()
@@ -303,8 +332,8 @@ def save_raw_orders_to_db(csv_text: str, account: str = "default") -> tuple[List
             
             # Create Order object
             order = Order(
-                id=order_id,
-                order_id=order_id,
+                id=order_row_id,
+                order_id=raw_order_id,
                 account=row.get('Account', account),
                 b_s=b_s,
                 contract=row.get('Contract', ''),
@@ -336,6 +365,250 @@ def save_raw_orders_to_db(csv_text: str, account: str = "default") -> tuple[List
     except Exception as e:
         db.session.rollback()
         return [], [f"Database error: {str(e)}"] + errors
+
+
+def process_filled_orders_to_trades(account: str = None) -> Dict[str, Any]:
+    """
+    Position-based matching: Process filled orders into trades.
+    
+    Logic:
+    - A trade starts when net position goes from 0 → non-zero
+    - A trade ends when net position returns to 0
+    - All orders within a trade are stored in the 'fills' JSON array
+    
+    Note: This function must be called within app.app_context()
+    
+    Returns:
+        dict with:
+        - filled_orders_count: number of filled orders found
+        - trades_created: number of trades created
+        - errors: list of error messages
+    """
+    from app.db.models import Order, Trade, db
+    import uuid
+    from decimal import Decimal
+    
+    errors = []
+    trades_created = 0
+    
+    # Get all filled orders, sorted by fill_time
+    query = Order.query.filter_by(is_filled=True).filter(Order.fill_time.isnot(None))
+    if account:
+        query = query.filter_by(account=account)
+    
+    all_orders = query.order_by(Order.fill_time).all()
+    filled_count = len(all_orders)
+    
+    if filled_count == 0:
+        return {
+            'filled_orders_count': 0,
+            'trades_created': 0,
+            'errors': ['No filled orders found']
+        }
+    
+    # Group orders by (account, contract) - each group processed independently
+    orders_by_key: Dict[tuple, List[Order]] = {}
+    for order in all_orders:
+        key = (order.account, order.contract)
+        if key not in orders_by_key:
+            orders_by_key[key] = []
+        orders_by_key[key].append(order)
+    
+    # Process each (account, contract) group
+    for (acc, contract), orders in orders_by_key.items():
+        # Sort by fill_time within this group
+        orders.sort(key=lambda o: o.fill_time)
+        
+        # Track position and current trade
+        net_position = 0  # Current position (positive = long, negative = short)
+        current_trade_orders: List[Order] = []  # Orders in current trade
+        
+        # Helper function to close current trade
+        def close_current_trade():
+            nonlocal trades_created, current_trade_orders
+            if len(current_trade_orders) > 0:
+                try:
+                    trade = _create_trade_from_orders(current_trade_orders, acc, contract)
+                    if trade:
+                        db.session.add(trade)
+                        trades_created += 1
+                        # Mark orders as matched
+                        for o in current_trade_orders:
+                            o.is_matched = True
+                            o.matched_trade_id = trade.id
+                except Exception as e:
+                    errors.append(f"Error creating trade from orders: {str(e)}")
+                current_trade_orders = []
+        
+        for order in orders:
+            # Calculate position change
+            if order.is_buy:
+                position_change = order.filled_qty
+            elif order.is_sell:
+                position_change = -order.filled_qty
+            else:
+                errors.append(f"Order {order.id}: Unknown direction (not buy or sell)")
+                continue
+            
+            # Store previous position and sign
+            prev_position = net_position
+            prev_position_sign = 1 if prev_position > 0 else (-1 if prev_position < 0 else 0)
+            
+            # Calculate new position after this order
+            new_position = net_position + position_change
+            
+            # Check if position crosses zero (goes from + to - or - to +, but not through 0)
+            # Example: +5 to -2 means we closed the long and opened a short
+            position_crossed_zero = (prev_position_sign != 0 and 
+                                    new_position != 0 and 
+                                    ((prev_position_sign > 0) != (new_position > 0)))
+            
+            if position_crossed_zero:
+                # Position crossed zero: close current trade, start new trade with this order
+                close_current_trade()
+                # Start new trade with this order
+                current_trade_orders = [order]
+                net_position = new_position
+            elif prev_position == 0:
+                # Starting new trade from zero
+                current_trade_orders = [order]
+                net_position = new_position
+                # Check if this order immediately closes the trade (position still 0)
+                if net_position == 0:
+                    close_current_trade()
+            else:
+                # Continue current trade
+                current_trade_orders.append(order)
+                net_position = new_position
+                # Check if trade is complete (position returns to exactly 0)
+                if net_position == 0:
+                    close_current_trade()
+        
+        # Check for open position at end (position != 0)
+        if net_position != 0:
+            errors.append(
+                f"Open position remaining for {contract} (account: {acc}): "
+                f"position={net_position}, {len(current_trade_orders)} orders unmatched"
+            )
+    
+    # Commit all trades
+    try:
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        errors.append(f"Database error committing trades: {str(e)}")
+    
+    return {
+        'filled_orders_count': filled_count,
+        'trades_created': trades_created,
+        'errors': errors
+    }
+
+
+def _create_trade_from_orders(orders: List[Order], account: str, contract: str) -> Optional[Trade]:
+    """
+    Helper: Create a Trade object from a list of orders.
+    
+    Args:
+        orders: List of Order objects that form one complete trade
+        account: Account ID
+        contract: Contract symbol (e.g., 'MGCG6')
+    
+    Returns:
+        Trade object or None if error
+    """
+    from app.db.models import Trade
+    from decimal import Decimal
+    import uuid
+    
+    if not orders or len(orders) == 0:
+        return None
+    
+    # Sort orders by fill_time
+    orders.sort(key=lambda o: o.fill_time)
+    
+    # Determine direction: first order determines direction
+    first_order = orders[0]
+    if first_order.is_buy:
+        direction = 'LONG'
+    elif first_order.is_sell:
+        direction = 'SHORT'
+    else:
+        return None  # Unknown direction
+    
+    # Calculate entry and exit
+    entry_orders = []
+    exit_orders = []
+    entry_qty = 0
+    exit_qty = 0
+    entry_value = Decimal('0')
+    exit_value = Decimal('0')
+    
+    for order in orders:
+        order_dict = order.to_dict()
+        if direction == 'LONG':
+            if order.is_buy:
+                entry_orders.append(order_dict)
+                entry_qty += order.filled_qty
+                entry_value += Decimal(str(order.avg_price)) * Decimal(str(order.filled_qty))
+            else:  # is_sell
+                exit_orders.append(order_dict)
+                exit_qty += order.filled_qty
+                exit_value += Decimal(str(order.avg_price)) * Decimal(str(order.filled_qty))
+        else:  # SHORT
+            if order.is_sell:
+                entry_orders.append(order_dict)
+                entry_qty += order.filled_qty
+                entry_value += Decimal(str(order.avg_price)) * Decimal(str(order.filled_qty))
+            else:  # is_buy
+                exit_orders.append(order_dict)
+                exit_qty += order.filled_qty
+                exit_value += Decimal(str(order.avg_price)) * Decimal(str(order.filled_qty))
+    
+    # Calculate average prices
+    if entry_qty > 0:
+        entry_price = float(entry_value / Decimal(str(entry_qty)))
+    else:
+        return None
+    
+    if exit_qty > 0:
+        exit_price = float(exit_value / Decimal(str(exit_qty)))
+    else:
+        return None
+    
+    # Entry and exit times
+    entry_time = orders[0].fill_time
+    exit_time = orders[-1].fill_time
+    
+    # Calculate PnL
+    if direction == 'LONG':
+        pnl = (exit_price - entry_price) * entry_qty
+    else:  # SHORT
+        pnl = (entry_price - exit_price) * entry_qty
+    
+    # Create fills array: all orders as dicts
+    fills = [order.to_dict() for order in orders]
+    
+    # Generate trade ID
+    trade_id = f"trade_{uuid.uuid4().hex[:12]}"
+    
+    # Create trade
+    trade = Trade(
+        id=trade_id,
+        acc_id=account,
+        symbol=contract,
+        direction=direction,
+        entry_time=entry_time,
+        exit_time=exit_time,
+        entry_price=Decimal(str(entry_price)),
+        exit_price=Decimal(str(exit_price)),
+        quantity=entry_qty,
+        pnl=Decimal(str(pnl)),
+        fills=fills,  # Store all orders as JSON array
+        is_scaled=len(exit_orders) > 1  # Multiple exit orders = scaled exit
+    )
+    
+    return trade
 
 if __name__ == '__main__':
     with open('/Users/desmondjung/Downloads/Orders.csv', 'r') as f:

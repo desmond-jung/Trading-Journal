@@ -19,6 +19,17 @@ def match_orders_to_trades(account:str = None) -> tuple[List[Trade], Dict]:
     if not all_orders:
         return [], {'trades_created': 0, 'unmatched_orders': 0, 'errors': []}
 
+    # If we can't parse fill_time, we can't reliably match. Keep them unmatched and report.
+    orders_missing_time = [o for o in all_orders if o.fill_time is None]
+    all_orders = [o for o in all_orders if o.fill_time is not None]
+
+    if not all_orders:
+        return [], {
+            'trades_created': 0,
+            'unmatched_orders': len(orders_missing_time),
+            'errors': [f"{len(orders_missing_time)} filled orders missing fill_time; cannot match until timestamps parse correctly."]
+        }
+
     
     # separate by sumbol and account
     orders_by_key = {}

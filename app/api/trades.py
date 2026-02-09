@@ -147,10 +147,13 @@ def import_trades_csv():
         from app.utils.csv_parser import save_raw_orders_to_db
         saved_orders, errors = save_raw_orders_to_db(csv_text, account)
         
-        if not saved_orders:
+        # If no new orders were saved, this can still be a valid idempotent import
+        # (e.g. user re-imported the same CSV). In that case, continue so matching
+        # can still run on any previously-unmatched filled orders.
+        if not saved_orders and not errors:
             return jsonify({
                 'error': 'No orders were saved',
-                'errors': errors
+                'errors': ['CSV parsed but produced no rows']
             }), 400
         
         # Step 2: Optionally match orders (can be disabled)
@@ -167,8 +170,9 @@ def import_trades_csv():
         
         # Return response
         return jsonify({
-            'message': f'Imported {len(saved_orders)} orders',
+            'message': f'Imported {len(saved_orders)} new orders',
             'orders_saved': len(saved_orders),
+            'orders_skipped': max(len(errors) - len(created_trades), 0),
             'trades_created': trades_created,
             # Provide a sample of trades so the frontend can immediately render without refetching
             'trades': [t.to_dict() for t in created_trades[:50]],
