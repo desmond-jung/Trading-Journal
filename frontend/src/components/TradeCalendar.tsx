@@ -1,5 +1,6 @@
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { DailyPnL } from '../App';
+import React from 'react';
 
 interface TradeCalendarProps {
   data: DailyPnL[];
@@ -11,7 +12,7 @@ interface TradeCalendarProps {
 }
 
 export function TradeCalendar({ data, currentYear, currentMonth, onDateClick, onMonthChange, theme }: TradeCalendarProps) {
-  const daysOfWeek = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const daysOfWeek = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Weekly'];
   
   const firstDay = new Date(currentYear, currentMonth - 1, 1).getDay();
   const daysInMonth = new Date(currentYear, currentMonth, 0).getDate();
@@ -29,21 +30,44 @@ export function TradeCalendar({ data, currentYear, currentMonth, onDateClick, on
     })
     .reduce((sum, d) => sum + d.pnl, 0);
 
-  // Calculate annual PnL
-  const annualPnL = data
-    .filter(d => {
-      const [year] = d.date.split('-').map(Number);
-      return year === currentYear;
-    })
-    .reduce((sum, d) => sum + d.pnl, 0);
+  // Calculate weekly aggregates
+  const getWeekOfMonth = (day: number) => {
+    const date = new Date(currentYear, currentMonth - 1, day);
+    const firstDayOfMonth = new Date(currentYear, currentMonth - 1, 1);
+    const dayOfWeek = firstDayOfMonth.getDay();
+    return Math.ceil((day + dayOfWeek) / 7);
+  };
+
+  const calculateWeeklyData = (weekNum: number) => {
+    const weekDays: DailyPnL[] = [];
+    for (let day = 1; day <= daysInMonth; day++) {
+      if (getWeekOfMonth(day) === weekNum) {
+        const dateStr = `${currentYear}-${currentMonth.toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}`;
+        const dailyData = data.find(d => d.date === dateStr);
+        if (dailyData) weekDays.push(dailyData);
+      }
+    }
+    const totalPnL = weekDays.reduce((sum, d) => sum + d.pnl, 0);
+    const totalTrades = weekDays.reduce((sum, d) => sum + d.trades.length, 0);
+    return { pnl: totalPnL, trades: totalTrades, weekNum };
+  };
 
   const getPnLColor = (pnl: number) => {
-    if (theme === 'dark') {
-      if (pnl >= 0) return 'bg-[#22C55E]/20 text-[#22C55E] border-[#22C55E]/50';
-      return 'bg-[#EF4444]/20 text-[#EF4444] border-[#EF4444]/50';
-    }
-    if (pnl >= 0) return 'bg-green-100 text-green-700 border-green-300';
-    return 'bg-red-100 text-red-700 border-red-300';
+    if (pnl > 0) return theme === 'dark' ? 'text-[#22C55E]' : 'text-green-600';
+    if (pnl < 0) return theme === 'dark' ? 'text-[#EF4444]' : 'text-red-600';
+    return theme === 'dark' ? 'text-[#B0B8C8]' : 'text-gray-600';
+  };
+
+  const getBorderColor = (pnl: number) => {
+    if (pnl > 0) return theme === 'dark' ? 'border-[#22C55E]/30' : 'border-green-300';
+    if (pnl < 0) return theme === 'dark' ? 'border-[#EF4444]/30' : 'border-red-300';
+    return theme === 'dark' ? 'border-[#404A5F]' : 'border-gray-200';
+  };
+
+  const getBackgroundColor = (pnl: number) => {
+    if (pnl > 0) return theme === 'dark' ? 'bg-[#22C55E]/5 hover:bg-[#22C55E]/10' : 'bg-green-50 hover:bg-green-100';
+    if (pnl < 0) return theme === 'dark' ? 'bg-[#EF4444]/5 hover:bg-[#EF4444]/10' : 'bg-red-50 hover:bg-red-100';
+    return theme === 'dark' ? 'bg-[#2E3849]/30 hover:bg-[#2E3849]/50' : 'bg-gray-50 hover:bg-gray-100';
   };
 
   const handlePrevMonth = () => {
@@ -62,136 +86,171 @@ export function TradeCalendar({ data, currentYear, currentMonth, onDateClick, on
     }
   };
 
+  // Calculate number of weeks in month
+  const numWeeks = getWeekOfMonth(daysInMonth);
+
   return (
     <>
-      {/* Statistics Section */}
-      <div className="flex gap-4 mb-4">
-        <div className={`flex-1 text-center p-4 rounded-lg border ${
-          theme === 'dark' 
-            ? 'bg-[#161B22] border-[#2A2F3A]' 
-            : 'bg-white border-gray-200'
-        }`}>
-          <div className={`text-xs mb-1 ${theme === 'dark' ? 'text-[#9BA4B5]' : 'text-gray-600'}`}>
-            Monthly P&L
-          </div>
-          <div className={`text-lg font-semibold ${
-            monthlyPnL >= 0 
-              ? theme === 'dark' ? 'text-[#22C55E]' : 'text-green-600'
-              : theme === 'dark' ? 'text-[#EF4444]' : 'text-red-600'
-          }`}>
-            {monthlyPnL >= 0 ? '+' : ''}${monthlyPnL.toFixed(2)}
-          </div>
+      {/* Monthly P/L Header */}
+      <div className={`text-center mb-6 p-4 rounded-lg border ${
+        theme === 'dark' 
+          ? 'bg-[#252D3D] border-[#404A5F]' 
+          : 'bg-white border-gray-200'
+      }`}>
+        <div className={`text-sm mb-1 ${theme === 'dark' ? 'text-[#B0B8C8]' : 'text-gray-600'}`}>
+          Monthly P/L:
         </div>
-        <div className={`flex-1 text-center p-4 rounded-lg border ${
-          theme === 'dark' 
-            ? 'bg-[#161B22] border-[#2A2F3A]' 
-            : 'bg-white border-gray-200'
-        }`}>
-          <div className={`text-xs mb-1 ${theme === 'dark' ? 'text-[#9BA4B5]' : 'text-gray-600'}`}>
-            Annual Net Total
-          </div>
-          <div className={`text-lg font-semibold ${
-            annualPnL >= 0 
-              ? theme === 'dark' ? 'text-[#22C55E]' : 'text-green-600'
-              : theme === 'dark' ? 'text-[#EF4444]' : 'text-red-600'
-          }`}>
-            {annualPnL >= 0 ? '+' : ''}${annualPnL.toFixed(2)}
-          </div>
+        <div className={`text-2xl font-bold ${getPnLColor(monthlyPnL)}`}>
+          {monthlyPnL >= 0 ? '+' : ''}${monthlyPnL.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
         </div>
       </div>
 
       {/* Calendar Card */}
-      <div className={`rounded-lg shadow-sm border p-4 ${
+      <div className={`rounded-lg shadow-sm border p-6 ${
         theme === 'dark' 
-          ? 'bg-[#161B22] border-[#2A2F3A]' 
+          ? 'bg-[#252D3D] border-[#404A5F]' 
           : 'bg-white border-gray-200'
       }`}>
-        {/* Month Navigation - Centered */}
-        <div className="flex justify-center items-center gap-4 mb-4">
+        {/* Month Navigation */}
+        <div className="flex justify-between items-center mb-6">
           <button
             onClick={handlePrevMonth}
-            className={`p-1.5 rounded-lg transition-colors ${
+            className={`p-2 rounded-lg transition-colors ${
               theme === 'dark'
-                ? 'hover:bg-[#1F2633] text-[#9BA4B5]'
+                ? 'hover:bg-[#2E3849] text-[#B0B8C8]'
                 : 'hover:bg-gray-100 text-gray-600'
             }`}
           >
             <ChevronLeft className="w-5 h-5" />
           </button>
-          <h3 className={`text-lg font-semibold min-w-[200px] text-center ${theme === 'dark' ? 'text-[#E6EDF3]' : 'text-gray-900'}`}>
+          <h3 className={`text-base font-medium ${theme === 'dark' ? 'text-[#E6EDF3]' : 'text-gray-900'}`}>
             {monthNames[currentMonth - 1]} {currentYear}
           </h3>
           <button
             onClick={handleNextMonth}
-            className={`p-1.5 rounded-lg transition-colors ${
+            className={`p-2 rounded-lg transition-colors ${
               theme === 'dark'
-                ? 'hover:bg-[#1F2633] text-[#9BA4B5]'
+                ? 'hover:bg-[#2E3849] text-[#B0B8C8]'
                 : 'hover:bg-gray-100 text-gray-600'
             }`}
           >
             <ChevronRight className="w-5 h-5" />
           </button>
+          <button
+            onClick={() => {
+              const today = new Date();
+              onMonthChange(today.getFullYear(), today.getMonth() + 1);
+            }}
+            className={`px-4 py-2 rounded-lg text-sm transition-colors ${
+              theme === 'dark'
+                ? 'bg-[#2E3849] text-[#E6EDF3] hover:bg-[#404A5F]'
+                : 'bg-gray-100 text-gray-900 hover:bg-gray-200'
+            }`}
+          >
+            Today
+          </button>
         </div>
         
         {/* Calendar Grid */}
-        <div className="grid grid-cols-7 gap-1.5">
+        <div className="grid grid-cols-7 gap-2">
           {/* Day headers */}
           {daysOfWeek.map(day => (
-            <div key={day} className={`text-center font-medium text-xs py-1.5 ${
-              theme === 'dark' ? 'text-[#9BA4B5]' : 'text-gray-600'
+            <div key={day} className={`text-center font-medium text-xs py-2 ${
+              theme === 'dark' ? 'text-[#B0B8C8]' : 'text-gray-600'
             }`}>
               {day}
             </div>
           ))}
           
-          {/* Empty cells for days before month starts */}
-          {Array.from({ length: firstDay }).map((_, i) => {
-            const prevMonth = currentMonth === 1 ? 12 : currentMonth - 1;
-            const prevYear = currentMonth === 1 ? currentYear - 1 : currentYear;
-            const daysInPrevMonth = new Date(prevYear, prevMonth, 0).getDate();
-            const prevMonthDay = daysInPrevMonth - (firstDay - 1 - i);
-            const dateStr = `${prevYear}-${prevMonth.toString().padStart(2, '0')}-${prevMonthDay.toString().padStart(2, '0')}`;
-            const dailyData = data.find(d => d.date === dateStr);
-            const pnl = dailyData?.pnl || 0;
+          {/* Calendar days - organized by week rows */}
+          {Array.from({ length: numWeeks }).map((_, weekIndex) => {
+            const weekNum = weekIndex + 1;
+            const weeklyData = calculateWeeklyData(weekNum);
             
             return (
-              <button
-                key={`empty-${i}`}
-                onClick={() => dailyData && onDateClick(dailyData)}
-                className={`aspect-square border-2 rounded-lg p-1.5 flex flex-col items-center justify-center transition-all ${getPnLColor(pnl)} hover:scale-110 hover:shadow-lg hover:brightness-125`}
-              >
-                <span className="font-semibold text-sm">{prevMonthDay}</span>
-                <span className="text-[10px] font-medium mt-0.5">
-                  {pnl >= 0 ? '+' : ''}${pnl.toFixed(0)}
-                </span>
-                <span className={`text-[9px] mt-0.5 ${theme === 'dark' ? 'text-[#9BA4B5]' : 'text-gray-500'}`}>
-                  {dailyData?.trades.length || 0} trades
-                </span>
-              </button>
-            );
-          })}
-          
-          {/* Calendar days */}
-          {Array.from({ length: daysInMonth }).map((_, i) => {
-            const day = i + 1;
-            const dateStr = `${currentYear}-${currentMonth.toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}`;
-            const dailyData = data.find(d => d.date === dateStr);
-            const pnl = dailyData?.pnl || 0;
-            
-            return (
-              <button
-                key={day}
-                onClick={() => dailyData && onDateClick(dailyData)}
-                className={`aspect-square border-2 rounded-lg p-1.5 flex flex-col items-center justify-center transition-all ${getPnLColor(pnl)} hover:scale-110 hover:shadow-lg hover:brightness-125`}
-              >
-                <span className="font-semibold text-sm">{day}</span>
-                <span className="text-[10px] font-medium mt-0.5">
-                  {pnl >= 0 ? '+' : ''}${pnl.toFixed(0)}
-                </span>
-                <span className={`text-[9px] mt-0.5 ${theme === 'dark' ? 'text-[#9BA4B5]' : 'text-gray-500'}`}>
-                  {dailyData?.trades.length || 0} trades
-                </span>
-              </button>
+              <React.Fragment key={`week-${weekNum}`}>
+                {/* Days of the week (Sun-Fri) */}
+                {Array.from({ length: 6 }).map((_, dayOfWeek) => {
+                  // Calculate which day of month this is
+                  let day: number | null = null;
+                  
+                  for (let d = 1; d <= daysInMonth; d++) {
+                    const date = new Date(currentYear, currentMonth - 1, d);
+                    if (date.getDay() === dayOfWeek && getWeekOfMonth(d) === weekNum) {
+                      day = d;
+                      break;
+                    }
+                  }
+                  
+                  if (day === null) {
+                    // Empty cell
+                    return (
+                      <div
+                        key={`empty-${weekNum}-${dayOfWeek}`}
+                        className={`aspect-square border rounded-lg ${
+                          theme === 'dark' ? 'border-[#404A5F]' : 'border-gray-200'
+                        }`}
+                      />
+                    );
+                  }
+                  
+                  const dateStr = `${currentYear}-${currentMonth.toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}`;
+                  const dailyData = data.find(d => d.date === dateStr);
+                  const pnl = dailyData?.pnl || 0;
+                  
+                  return (
+                    <button
+                      key={day}
+                      onClick={() => dailyData && onDateClick(dailyData)}
+                      disabled={!dailyData}
+                      className={`aspect-square border rounded-lg p-2 flex flex-col transition-all ${
+                        getBorderColor(pnl)
+                      } ${
+                        getBackgroundColor(pnl)
+                      } ${
+                        !dailyData ? 'cursor-default' : 'cursor-pointer'
+                      }`}
+                    >
+                      <span className={`text-xs ${theme === 'dark' ? 'text-[#B0B8C8]' : 'text-gray-500'}`}>
+                        {day}
+                      </span>
+                      <div className="flex-1 flex flex-col items-center justify-center">
+                        {dailyData && (
+                          <>
+                            <span className={`text-sm font-semibold ${getPnLColor(pnl)}`}>
+                              {pnl >= 0 ? '+' : ''}${Math.abs(pnl).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </span>
+                            <span className={`text-[10px] mt-0.5 ${theme === 'dark' ? 'text-[#B0B8C8]' : 'text-gray-500'}`}>
+                              {dailyData.trades.length} trade{dailyData.trades.length !== 1 ? 's' : ''}
+                            </span>
+                          </>
+                        )}
+                      </div>
+                    </button>
+                  );
+                })}
+                
+                {/* Weekly aggregate column */}
+                <div
+                  className={`aspect-square border rounded-lg p-2 flex flex-col ${
+                    getBorderColor(weeklyData.pnl)
+                  } ${
+                    getBackgroundColor(weeklyData.pnl)
+                  }`}
+                >
+                  <span className={`text-xs ${theme === 'dark' ? 'text-[#B0B8C8]' : 'text-gray-500'}`}>
+                    Week {weekNum}
+                  </span>
+                  <div className="flex-1 flex flex-col items-center justify-center">
+                    <span className={`text-sm font-semibold ${getPnLColor(weeklyData.pnl)}`}>
+                      {weeklyData.pnl >= 0 ? '+' : ''}${Math.abs(weeklyData.pnl).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                    <span className={`text-[10px] mt-0.5 ${theme === 'dark' ? 'text-[#B0B8C8]' : 'text-gray-500'}`}>
+                      {weeklyData.trades} trade{weeklyData.trades !== 1 ? 's' : ''}
+                    </span>
+                  </div>
+                </div>
+              </React.Fragment>
             );
           })}
         </div>

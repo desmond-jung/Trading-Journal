@@ -24,11 +24,11 @@ export function Sidebar({ currentPage, onNavigate, onShowImport, onShowRules, on
     { id: 'connections', label: 'Connections', icon: Link },
   ];
 
-  const bgClass = theme === 'dark' ? 'bg-[#161B22]' : 'bg-white';
-  const borderClass = theme === 'dark' ? 'border-[#2A2F3A]' : 'border-gray-200';
-  const textClass = theme === 'dark' ? 'text-[#9BA4B5]' : 'text-gray-700';
-  const activeClass = theme === 'dark' ? 'bg-[#1F2633] text-[#E6EDF3] border-l-4 border-l-[#3B82F6]' : 'bg-blue-100 text-blue-700';
-  const hoverClass = theme === 'dark' ? 'hover:bg-[#1F2633]' : 'hover:bg-gray-100';
+  const bgClass = theme === 'dark' ? 'bg-[#252D3D]' : 'bg-white';
+  const borderClass = theme === 'dark' ? 'border-[#404A5F]' : 'border-gray-200';
+  const textClass = theme === 'dark' ? 'text-[#B0B8C8]' : 'text-gray-700';
+  const activeClass = theme === 'dark' ? 'bg-[#2E3849] text-[#E6EDF3] border-l-4 border-l-[#3B82F6]' : 'bg-blue-100 text-blue-700';
+  const hoverClass = theme === 'dark' ? 'hover:bg-[#2E3849]' : 'hover:bg-gray-100';
 
   return (
     <div className={`w-64 ${bgClass} border-r ${borderClass} flex flex-col`}>
@@ -37,7 +37,7 @@ export function Sidebar({ currentPage, onNavigate, onShowImport, onShowRules, on
         <h1 className={`text-xl font-bold ${theme === 'dark' ? 'text-[#E6EDF3]' : 'text-gray-900'}`}>
           Trading Hub
         </h1>
-        <p className={`text-xs ${theme === 'dark' ? 'text-[#9BA4B5]' : 'text-gray-600'} mt-1`}>
+        <p className={`text-xs ${theme === 'dark' ? 'text-[#B0B8C8]' : 'text-gray-600'} mt-1`}>
           Analytics Platform
         </p>
       </div>
@@ -64,7 +64,7 @@ export function Sidebar({ currentPage, onNavigate, onShowImport, onShowRules, on
       </nav>
 
       {/* Quick Actions */}
-      <div className={`p-4 border-t ${borderClass} space-y-1 ${theme === 'dark' ? 'bg-[#161B22]' : 'bg-white'}`}>
+      <div className={`p-4 border-t ${borderClass} space-y-1 ${theme === 'dark' ? 'bg-[#252D3D]' : 'bg-white'}`}>
         <button
           onClick={onShowImport}
           className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${textClass} ${hoverClass}`}

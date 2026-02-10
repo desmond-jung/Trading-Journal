@@ -258,22 +258,35 @@ class TestCsvImports(unittest.TestCase):
             sample_trade = Trade.query.first()
             if sample_trade:
                 print(f"\n  Step 5: Example Trade Entry from Database")
-                print(f"    {'='*60}")
-                print(f"    Trade ID: {sample_trade.id}")
-                print(f"    Account: {sample_trade.acc_id}")
-                print(f"    Symbol: {sample_trade.symbol}")
-                print(f"    Direction: {sample_trade.direction}")
-                print(f"    Entry Time: {sample_trade.entry_time}")
-                print(f"    Exit Time: {sample_trade.exit_time}")
-                print(f"    Entry Price: {sample_trade.entry_price}")
-                print(f"    Exit Price: {sample_trade.exit_price}")
-                print(f"    Quantity: {sample_trade.quantity}")
-                print(f"    PnL: {sample_trade.pnl}")
-                print(f"    Strategy: {sample_trade.strategy}")
-                print(f"    Trade Type: {sample_trade.trade_type}")
-                print(f"    Is Scaled: {sample_trade.is_scaled}")
-                print(f"    Fills Count: {len(sample_trade.fills) if sample_trade.fills else 0}")
-                print(f"    {'='*60}")
+                print(f"    {'='*70}")
+                print(f"    📋 THIS IS ONE ROW IN THE 'trades' TABLE:")
+                print(f"    {'='*70}")
+                print(f"    ")
+                print(f"    Database Column → Value")
+                print(f"    {'-'*70}")
+                print(f"    id                  → {sample_trade.id}")
+                print(f"    acc_id              → {sample_trade.acc_id}")
+                print(f"    symbol              → {sample_trade.symbol}")
+                print(f"    direction           → {sample_trade.direction}")
+                print(f"    entry_time          → {sample_trade.entry_time}")
+                print(f"    exit_time           → {sample_trade.exit_time}")
+                print(f"    entry_price         → {sample_trade.entry_price}")
+                print(f"    exit_price          → {sample_trade.exit_price}")
+                print(f"    quantity            → {sample_trade.quantity}")
+                print(f"    pnl                 → {sample_trade.pnl}")
+                print(f"    strategy            → {sample_trade.strategy}")
+                print(f"    trade_type          → {sample_trade.trade_type}")
+                print(f"    entry_order_id      → {sample_trade.entry_order_id}")
+                print(f"    exit_order_id       → {sample_trade.exit_order_id}")
+                print(f"    exit_orders         → {sample_trade.exit_orders}")
+                print(f"    is_scaled           → {sample_trade.is_scaled}")
+                print(f"    fills               → [JSON array with {len(sample_trade.fills) if sample_trade.fills else 0} orders]")
+                print(f"    {'='*70}")
+                print(f"    ")
+                print(f"    ⚠️  IMPORTANT: Everything above (from 'id' to 'fills') is ONE ROW in the trades table.")
+                print(f"    Each trade = one row with all these columns. The 'fills' column contains")
+                print(f"    a JSON array of all the orders that make up this trade.")
+                print(f"    ")
                 
                 self.assertIsNotNone(
                     sample_trade.fills,
@@ -290,11 +303,13 @@ class TestCsvImports(unittest.TestCase):
                     "Trade should have at least one fill"
                 )
                 
-                # Show all fills
+                # Show all fills (these are INSIDE the 'fills' JSON column)
                 if sample_trade.fills:
-                    print(f"\n    Fills ({len(sample_trade.fills)} orders):")
+                    print(f"    ")
+                    print(f"    📦 DETAIL: What's inside the 'fills' JSON column:")
+                    print(f"    {'-'*70}")
                     for i, fill in enumerate(sample_trade.fills, 1):
-                        print(f"      Fill {i}:")
+                        print(f"      Order {i} in fills array:")
                         print(f"        - Order ID: {fill.get('id', 'N/A')}")
                         print(f"        - B/S: {fill.get('b_s', 'N/A')}")
                         print(f"        - Quantity: {fill.get('filled_qty', 'N/A')}")
@@ -302,12 +317,16 @@ class TestCsvImports(unittest.TestCase):
                         print(f"        - Fill Time: {fill.get('fill_time', 'N/A')}")
                         print(f"        - Status: {fill.get('status', 'N/A')}")
                         print(f"        - Contract: {fill.get('contract', 'N/A')}")
+                        if i < len(sample_trade.fills):
+                            print(f"        ")
                 
                 # Also show the full trade dict representation
-                print(f"\n    Full Trade Dictionary (to_dict()):")
-                trade_dict = sample_trade.to_dict()
+                print(f"    ")
+                print(f"    📄 JSON Representation (what the 'fills' column looks like in JSON):")
+                print(f"    {'-'*70}")
                 import json
-                print(f"    {json.dumps(trade_dict, indent=6, default=str)}")
+                fills_json = json.dumps(sample_trade.fills, indent=8, default=str)
+                print(f"    fills = {fills_json}")
             
             # Final summary
             final_trades_count = Trade.query.count()

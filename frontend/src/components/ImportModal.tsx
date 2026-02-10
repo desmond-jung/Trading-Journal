@@ -1,96 +1,21 @@
-import React, { useState } from 'react';
+import { useState, ChangeEvent } from 'react';
 import { X, Upload, Code } from 'lucide-react';
-import { Trade } from '../App';
+
+const API_URL = 'http://localhost:5001';
 
 interface ImportModalProps {
   onClose: () => void;
-  onImport: (trades: Trade[]) => void;
+  onImport: () => void;
   theme: 'light' | 'dark';
 }
 
 export function ImportModal({ onClose, onImport, theme }: ImportModalProps) {
-  const API_URL = 'http://localhost:5001';
   const [importMethod, setImportMethod] = useState<'csv' | 'api'>('csv');
   const [csvData, setCsvData] = useState('');
   const [apiEndpoint, setApiEndpoint] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [errorMessage, setErrorMessage] = useState<string | null >(null);
-
-  const parseCsv = (csv: string): Trade[] => {
-    const lines = csv.trim().split('\n');
-    if (lines.length < 2) return [];
-
-    const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
-    const trades: Trade[] = [];
-
-    for (let i = 1; i < lines.length; i++) {
-      const values = lines[i].split(',').map(v => v.trim());
-      const trade: any = {};
-
-      headers.forEach((header, index) => {
-        trade[header] = values[index];
-      });
-
-      // Map CSV data to Trade object
-      const mappedTrade: Trade = {
-        id: `imported-${Date.now()}-${i}`,
-        date: trade.date || new Date().toISOString().split('T')[0],
-        symbol: trade.symbol || '',
-        side: trade.side?.toLowerCase() === 'short' ? 'short' : 'long',
-        entryPrice: parseFloat(trade.entry_price || trade.entryprice || trade.entry || 0),
-        exitPrice: parseFloat(trade.exit_price || trade.exitprice || trade.exit || 0),
-        quantity: parseInt(trade.quantity || trade.qty || trade.shares || 0),
-        pnl: parseFloat(trade.pnl || trade.profit || trade.pl || 0),
-        riskReward: parseFloat(trade.risk_reward || trade.rr || 1),
-        tags: trade.tags ? trade.tags.split(';').filter(Boolean) : [],
-        notes: trade.notes || '',
-        time: trade.time || '09:30',
-        screenshots: []
-      };
-
-      // If PnL not provided, calculate it
-      if (!trade.pnl && mappedTrade.entryPrice && mappedTrade.exitPrice && mappedTrade.quantity) {
-        if (mappedTrade.side === 'long') {
-          mappedTrade.pnl = (mappedTrade.exitPrice - mappedTrade.entryPrice) * mappedTrade.quantity;
-        } else {
-          mappedTrade.pnl = (mappedTrade.entryPrice - mappedTrade.exitPrice) * mappedTrade.quantity;
-        }
-      }
-
-      trades.push(mappedTrade);
-    }
-
-    return trades;
-  };
-  const transformBackendTradeToFrontend = (backendTrade: any): Trade => {
-    const entryTime = new Date(backendTrade.entry_time);
-    const date = entryTime.toISOString().split('T')[0];
-
-    const hours = entryTime.getHours().toString().padStart(2, '0');
-    const minutes = entryTime.getMinutes().toString().padStart(2, '0');
-    const time = `${hours}:${minutes}`;
-
-    const side = backendTrade.direction?.toLowerCase() === 'short' ? 'short' : 'long';
-
-    return {
-      id: backendTrade.id,
-      date: date,
-      symbol: backendTrade.symbol,
-      side: side as 'long' | 'short',
-      entryPrice: backendTrade.entry_price,
-      exitPrice: backendTrade.exit_price,
-      quantity: backendTrade.quantity,
-      pnl: backendTrade.pnl,
-      riskReward: 1, // Default value, not in backend model
-      tags: backendTrade.strategy ? [backendTrade.strategy] : [],
-      notes: '', // Not in backend model
-      time: time,
-      screenshots: [],
-      account: backendTrade.acc_id,
-      duration: undefined // Calculate if needed from entry_time and exit_time
-    };
-  };
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const handleCsvImport = async () => {
     // Validate CSV data exists
@@ -112,7 +37,7 @@ export function ImportModal({ onClose, onImport, theme }: ImportModalProps) {
         },
         body: JSON.stringify({
           csv_text: csvData,
-          default_acc_id: 'default' // You can make this configurable later
+          default_acc_id: 'default'
         }),
       });
 
@@ -129,20 +54,19 @@ export function ImportModal({ onClose, onImport, theme }: ImportModalProps) {
         return;
       }
 
-      // Transform backend trades to frontend format
-      const importedTrades = data.trades || [];
-      const frontendTrades = importedTrades.map(transformBackendTradeToFrontend);
-
-      if (frontendTrades.length === 0) {
+      // Show success message
+      const importedCount = data.imported_count || (data.trades?.length || 0);
+      const skippedCount = data.skipped_count || 0;
+      
+      if (importedCount === 0 && skippedCount === 0) {
         setErrorMessage('No trades were imported. Check your CSV format.');
         return;
       }
 
-      // Show success message
-      alert(`Successfully imported ${data.imported_count || frontendTrades.length} trades!${data.skipped_count ? ` (${data.skipped_count} skipped)` : ''}`);
+      alert(`Successfully imported ${importedCount} trades!${skippedCount > 0 ? ` (${skippedCount} skipped as duplicates)` : ''}`);
 
-      // Pass trades to parent component (this updates the UI)
-      onImport(frontendTrades);
+      // Call onImport to trigger data refresh in parent
+      onImport();
       onClose(); // Close the modal
     } catch (error) {
       // Handle network errors or other exceptions
@@ -176,7 +100,7 @@ export function ImportModal({ onClose, onImport, theme }: ImportModalProps) {
     }
   };
 
-  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (file) {
       const reader = new FileReader();
@@ -288,33 +212,20 @@ export function ImportModal({ onClose, onImport, theme }: ImportModalProps) {
                 </ul>
               </div>
 
-              {/* Error Message Display */}
               {errorMessage && (
                 <div className={`mb-4 p-3 rounded-lg ${
-                  theme === 'dark' ? 'bg-red-900/30 border border-red-700' : 'bg-red-50 border border-red-200'
+                  theme === 'dark' ? 'bg-red-900 bg-opacity-30 text-red-300' : 'bg-red-50 text-red-700'
                 }`}>
-                  <p className={`text-sm ${theme === 'dark' ? 'text-red-300' : 'text-red-800'}`}>
-                    {errorMessage}
-                  </p>
+                  <p className="text-sm">{errorMessage}</p>
                 </div>
               )}
 
               <button
                 onClick={handleCsvImport}
                 disabled={!csvData || isLoading}
-                className="w-full bg-blue-600 text-white py-3 rounded-lg hover:bg-blue-700 transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                className="w-full bg-blue-600 text-white py-3 rounded-lg hover:bg-blue-700 transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {isLoading ? (
-                  <>
-                    <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                    </svg>
-                    Importing...
-                  </>
-                ) : (
-                  'Import from CSV'
-                )}
+                {isLoading ? 'Importing...' : 'Import from CSV'}
               </button>
             </div>
           )}

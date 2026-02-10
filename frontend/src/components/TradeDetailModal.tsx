@@ -44,23 +44,25 @@ export function TradeDetailModal({ dailyData, onClose, onUpdateTrades, onNavigat
     onUpdateTrades(updatedTrades);
   };
 
-  const bgClass = theme === 'dark' ? 'bg-[#161B22]' : 'bg-white';
+  const bgClass = theme === 'dark' ? 'bg-[#252D3D]' : 'bg-white';
   const textClass = theme === 'dark' ? 'text-[#E6EDF3]' : 'text-gray-900';
-  const textSecondaryClass = theme === 'dark' ? 'text-[#9BA4B5]' : 'text-gray-600';
-  const borderClass = theme === 'dark' ? 'border-[#2A2F3A]' : 'border-gray-200';
-  const cardBgClass = theme === 'dark' ? 'bg-[#1F2633]' : 'bg-gray-50';
+  const textSecondaryClass = theme === 'dark' ? 'text-[#B0B8C8]' : 'text-gray-600';
+  const borderClass = theme === 'dark' ? 'border-[#404A5F]' : 'border-gray-200';
+  const cardBgClass = theme === 'dark' ? 'bg-[#2E3849]' : 'bg-gray-50';
 
   return (
     <>
       <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
         <div className={`${bgClass} rounded-xl shadow-2xl w-full max-w-6xl max-h-[90vh] overflow-hidden flex flex-col`}>
           {/* Header */}
-          <div className="bg-[#1E3A8A] text-white px-6 py-4">
+          <div className={`${cardBgClass} px-6 py-4`}>
             <div className="flex items-center justify-between">
               {/* Left Arrow */}
               <button
                 onClick={() => onNavigate?.('prev')}
-                className="p-2 hover:bg-white hover:bg-opacity-20 rounded-lg transition-colors"
+                className={`p-2 rounded-lg transition-colors ${
+                  theme === 'dark' ? 'hover:bg-[#404A5F] text-[#B0B8C8]' : 'hover:bg-gray-200 text-gray-600'
+                }`}
                 disabled={!onNavigate}
               >
                 <ChevronLeft className="w-6 h-6" />
@@ -68,7 +70,7 @@ export function TradeDetailModal({ dailyData, onClose, onUpdateTrades, onNavigat
 
               {/* Centered Date */}
               <div className="text-center">
-                <h2 className="text-2xl font-bold">
+                <h2 className={`text-2xl font-bold ${textClass}`}>
                   {new Date(dailyData.date).toLocaleDateString('en-US', { 
                     weekday: 'long', 
                     year: 'numeric', 
@@ -82,14 +84,18 @@ export function TradeDetailModal({ dailyData, onClose, onUpdateTrades, onNavigat
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => onNavigate?.('next')}
-                  className="p-2 hover:bg-white hover:bg-opacity-20 rounded-lg transition-colors"
+                  className={`p-2 rounded-lg transition-colors ${
+                    theme === 'dark' ? 'hover:bg-[#404A5F] text-[#B0B8C8]' : 'hover:bg-gray-200 text-gray-600'
+                  }`}
                   disabled={!onNavigate}
                 >
                   <ChevronRight className="w-6 h-6" />
                 </button>
                 <button
                   onClick={onClose}
-                  className="p-2 hover:bg-white hover:bg-opacity-20 rounded-lg transition-colors"
+                  className={`p-2 rounded-lg transition-colors ${
+                    theme === 'dark' ? 'hover:bg-[#404A5F] text-[#B0B8C8]' : 'hover:bg-gray-200 text-gray-600'
+                  }`}
                 >
                   <X className="w-6 h-6" />
                 </button>
@@ -97,13 +103,13 @@ export function TradeDetailModal({ dailyData, onClose, onUpdateTrades, onNavigat
             </div>
 
             {/* Tabs */}
-            <div className="flex gap-4 mt-4 border-b border-white border-opacity-20">
+            <div className={`flex gap-4 mt-4 border-b ${borderClass}`}>
               <button
                 onClick={() => setActiveTab('overview')}
                 className={`px-4 py-2 font-medium transition-colors ${
                   activeTab === 'overview'
-                    ? 'border-b-2 border-white text-white'
-                    : 'text-white text-opacity-70 hover:text-opacity-100'
+                    ? `border-b-2 border-[#1E3A8A] ${textClass}`
+                    : `${textSecondaryClass} hover:${textClass}`
                 }`}
               >
                 Overview
@@ -112,8 +118,8 @@ export function TradeDetailModal({ dailyData, onClose, onUpdateTrades, onNavigat
                 onClick={() => setActiveTab('trades')}
                 className={`px-4 py-2 font-medium transition-colors ${
                   activeTab === 'trades'
-                    ? 'border-b-2 border-white text-white'
-                    : 'text-white text-opacity-70 hover:text-opacity-100'
+                    ? `border-b-2 border-[#1E3A8A] ${textClass}`
+                    : `${textSecondaryClass} hover:${textClass}`
                 }`}
               >
                 Trades

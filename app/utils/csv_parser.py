@@ -265,12 +265,18 @@ def save_raw_orders_to_db(csv_text: str, account: str = "default") -> tuple[List
         if not value:
             return None
         s = str(value).strip()
+        if not s or s.lower() in ['none', 'null', '']:
+            return None
+        
         # Try a few known formats from your Orders.csv
+        # Format examples: "01/15/2026 07:40:22", "1/15/26 7:40"
         fmts = [
-            "%m/%d/%y %H:%M",
-            "%m/%d/%y %H:%M:%S",
-            "%m/%d/%Y %H:%M",
-            "%m/%d/%Y %H:%M:%S",
+            "%m/%d/%Y %H:%M:%S",  # 01/15/2026 07:40:22
+            "%m/%d/%y %H:%M:%S",  # 1/15/26 7:40:22
+            "%m/%d/%Y %H:%M",     # 01/15/2026 07:40
+            "%m/%d/%y %H:%M",     # 1/15/26 7:40
+            "%Y-%m-%d %H:%M:%S",  # ISO format
+            "%Y-%m-%d %H:%M",     # ISO format without seconds
         ]
         for fmt in fmts:
             try:
@@ -279,8 +285,10 @@ def save_raw_orders_to_db(csv_text: str, account: str = "default") -> tuple[List
                 continue
         # Fall back: ISO-ish
         try:
-            return datetime.fromisoformat(s)
+            return datetime.fromisoformat(s.replace('Z', '+00:00'))
         except Exception:
+            import sys
+            print(f"⚠️  DEBUG: Could not parse datetime: '{s}'", file=sys.stderr)
             return None
 
     for row_num, row in enumerate(rows, start = 2):
@@ -291,19 +299,49 @@ def save_raw_orders_to_db(csv_text: str, account: str = "default") -> tuple[List
             # Primary key for our DB row (stable per unique row)
             order_row_id = _stable_row_id(row)
             
+            # Parse fill time - try multiple column name variations (needed before checking existing)
+            fill_time_str = (
+                row.get("Fill Time") or 
+                row.get("fill_time") or 
+                row.get("FillTime") or
+                row.get("fillTime") or
+                row.get("Timestamp") or
+                row.get("timestamp")
+            )
+            fill_time = _parse_datetime_maybe(fill_time_str)
+            
+            # Determine status flags (needed before checking existing)
+            status = row.get('Status', '').strip()
+            is_filled = status == 'Filled'
+            
             # Check if order already exists (idempotency)
             existing = Order.query.filter_by(id=order_row_id).first()
             if existing:
+                # Update fill_time if it's missing but we have it now
+                updated = False
+                if not existing.fill_time and fill_time:
+                    existing.fill_time = fill_time
+                    updated = True
+                # Also update is_filled if status changed
+                if existing.status != status:
+                    existing.status = status
+                    existing.is_filled = is_filled
+                    updated = True
+                if updated:
+                    db.session.add(existing)
+                    import sys
+                    print(f"🔄 DEBUG: Updated existing order {order_row_id[:20]}... (fill_time={fill_time is not None}, status={status})", file=sys.stderr)
                 errors.append(f"Row {row_num}: Order row already exists, skipping")
                 continue
             
-            # Parse fill time
-            fill_time_str = row.get("Fill Time") or row.get("fill_time") or row.get("Timestamp")
-            fill_time = _parse_datetime_maybe(fill_time_str)
-            
-            # Determine status flags
-            status = row.get('Status', '').strip()
-            is_filled = status == 'Filled'
+            # Debug: log if fill_time is missing for filled orders
+            if is_filled and not fill_time:
+                import sys
+                print(f"⚠️  DEBUG: Row {row_num}: Filled order but no fill_time. Status={status}", file=sys.stderr)
+                print(f"⚠️  DEBUG: Fill Time column value: '{fill_time_str}'", file=sys.stderr)
+                # Show all columns that might contain time info
+                time_columns = [k for k in row.keys() if 'time' in k.lower() or 'date' in k.lower() or 'timestamp' in k.lower()]
+                print(f"⚠️  DEBUG: Time-related columns found: {time_columns}", file=sys.stderr)
             
             b_s = row.get('B/S', '').strip()
             is_buy = b_s.upper() == 'BUY'
@@ -384,26 +422,43 @@ def process_filled_orders_to_trades(account: str = None) -> Dict[str, Any]:
         - trades_created: number of trades created
         - errors: list of error messages
     """
+    import sys
     from app.db.models import Order, Trade, db
     import uuid
     from decimal import Decimal
+    
+    print(f"\n🔄 DEBUG [process_filled_orders_to_trades]: Starting matching...", file=sys.stderr)
+    print(f"🔄 DEBUG: Account filter = {account}", file=sys.stderr)
     
     errors = []
     trades_created = 0
     
     # Get all filled orders, sorted by fill_time
     query = Order.query.filter_by(is_filled=True).filter(Order.fill_time.isnot(None))
-    if account:
+    if account and account != "default":
+        # Only filter by account if it's not "default" (which might not match actual account names)
         query = query.filter_by(account=account)
+        print(f"🔄 DEBUG: Filtering by account = {account}", file=sys.stderr)
+    else:
+        print(f"🔄 DEBUG: Not filtering by account (account={account}), getting all filled orders", file=sys.stderr)
     
     all_orders = query.order_by(Order.fill_time).all()
     filled_count = len(all_orders)
     
+    print(f"🔄 DEBUG: Found {filled_count} filled orders", file=sys.stderr)
+    
     if filled_count == 0:
+        # Check total orders to see if any exist
+        total_orders = Order.query.count()
+        filled_orders_no_time = Order.query.filter_by(is_filled=True).count()
+        print(f"🔄 DEBUG: Total orders in DB: {total_orders}", file=sys.stderr)
+        print(f"🔄 DEBUG: Filled orders (any): {filled_orders_no_time}", file=sys.stderr)
+        print(f"🔄 DEBUG: Filled orders with fill_time: {filled_count}", file=sys.stderr)
+        
         return {
             'filled_orders_count': 0,
             'trades_created': 0,
-            'errors': ['No filled orders found']
+            'errors': [f'No filled orders found (total orders: {total_orders}, filled: {filled_orders_no_time})']
         }
     
     # Group orders by (account, contract) - each group processed independently
@@ -414,8 +469,13 @@ def process_filled_orders_to_trades(account: str = None) -> Dict[str, Any]:
             orders_by_key[key] = []
         orders_by_key[key].append(order)
     
+    print(f"🔄 DEBUG: Grouped into {len(orders_by_key)} (account, contract) groups", file=sys.stderr)
+    for key, orders_list in orders_by_key.items():
+        print(f"  - {key[0]}/{key[1]}: {len(orders_list)} orders", file=sys.stderr)
+    
     # Process each (account, contract) group
     for (acc, contract), orders in orders_by_key.items():
+        print(f"\n🔄 DEBUG: Processing {contract} (account: {acc}), {len(orders)} orders", file=sys.stderr)
         # Sort by fill_time within this group
         orders.sort(key=lambda o: o.fill_time)
         
@@ -486,17 +546,26 @@ def process_filled_orders_to_trades(account: str = None) -> Dict[str, Any]:
         
         # Check for open position at end (position != 0)
         if net_position != 0:
-            errors.append(
+            error_msg = (
                 f"Open position remaining for {contract} (account: {acc}): "
                 f"position={net_position}, {len(current_trade_orders)} orders unmatched"
             )
+            errors.append(error_msg)
+            print(f"⚠️  DEBUG: {error_msg}", file=sys.stderr)
+    
+    print(f"\n🔄 DEBUG: Matching complete:", file=sys.stderr)
+    print(f"  - Trades created: {trades_created}", file=sys.stderr)
+    print(f"  - Errors: {len(errors)}", file=sys.stderr)
     
     # Commit all trades
     try:
         db.session.commit()
+        print(f"✅ DEBUG: Committed {trades_created} trades to database", file=sys.stderr)
     except Exception as e:
         db.session.rollback()
-        errors.append(f"Database error committing trades: {str(e)}")
+        error_msg = f"Database error committing trades: {str(e)}"
+        errors.append(error_msg)
+        print(f"❌ DEBUG: {error_msg}", file=sys.stderr)
     
     return {
         'filled_orders_count': filled_count,
@@ -592,6 +661,10 @@ def _create_trade_from_orders(orders: List[Order], account: str, contract: str) 
     # Generate trade ID
     trade_id = f"trade_{uuid.uuid4().hex[:12]}"
     
+    # Detect trade type (day trade vs swing)
+    from app.services.metrics import detect_trade_type
+    trade_type = detect_trade_type(entry_time, exit_time)
+    
     # Create trade
     trade = Trade(
         id=trade_id,
@@ -604,6 +677,7 @@ def _create_trade_from_orders(orders: List[Order], account: str, contract: str) 
         exit_price=Decimal(str(exit_price)),
         quantity=entry_qty,
         pnl=Decimal(str(pnl)),
+        trade_type=trade_type,  # day_trade, swing, etc.
         fills=fills,  # Store all orders as JSON array
         is_scaled=len(exit_orders) > 1  # Multiple exit orders = scaled exit
     )

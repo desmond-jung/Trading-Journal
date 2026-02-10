@@ -11,6 +11,8 @@ import { AIInsights } from './components/AIInsights';
 import { QueryAssistant } from './components/QueryAssistant';
 import { MarketEvents } from './components/MarketEvents';
 
+const API_URL = 'http://localhost:5001';
+
 export interface Trade {
   id: string;
   date: string;
@@ -50,49 +52,72 @@ export interface UserSettings {
 
 export type PageType = 'home' | 'calendar' | 'dashboard' | 'ai-insights' | 'query' | 'market-events' | 'trade-copier' | 'trading-bot' | 'accounts' | 'connections';
 
-// Mock data for demonstration
-const generateMockData = (year: number, month: number): DailyPnL[] => {
-  const data: DailyPnL[] = [];
-  const strategies = ['Breakout', 'Scalp', 'Reversal', 'Trend Following', 'Support/Resistance'];
-  const symbols = ['/ES', '/NQ', '/MNQ', '/YM', '/RTY', '/MES', '/GC', '/MGC', '/CL', '/NKD'];
-  const daysInMonth = new Date(year, month, 0).getDate();
+// Transform backend trade format to frontend format
+const transformBackendTradeToFrontend = (backendTrade: any): Trade => {
+  const entryTime = new Date(backendTrade.entry_time);
+  const date = entryTime.toISOString().split('T')[0];
   
-  for (let day = 1; day <= daysInMonth; day++) {
-    const numTrades = Math.floor(Math.random() * 5) + 1;
-    const trades: Trade[] = [];
-    let dailyPnL = 0;
-    
-    for (let i = 0; i < numTrades; i++) {
-      const pnl = (Math.random() - 0.45) * 500;
-      dailyPnL += pnl;
-      
-      trades.push({
-        id: `trade-${year}-${month}-${day}-${i}`,
-        date: `${year}-${month.toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}`,
-        symbol: symbols[Math.floor(Math.random() * symbols.length)],
-        side: Math.random() > 0.5 ? 'long' : 'short',
-        entryPrice: 100 + Math.random() * 400,
-        exitPrice: 100 + Math.random() * 400,
-        quantity: Math.floor(Math.random() * 100) + 10,
-        pnl: pnl,
-        riskReward: Math.random() * 4 + 0.5,
-        tags: [strategies[Math.floor(Math.random() * strategies.length)]],
-        time: `${Math.floor(Math.random() * 12) + 8}:${Math.floor(Math.random() * 60).toString().padStart(2, '0')}`,
-        notes: Math.random() > 0.7 ? 'Good setup, followed my rules' : undefined,
-        screenshots: [],
-        account: 'Account1',
-        duration: Math.floor(Math.random() * 60) + 10
-      });
-    }
-    
-    data.push({
-      date: `${year}-${month.toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}`,
-      pnl: dailyPnL,
-      trades: trades
-    });
+  const hours = entryTime.getHours().toString().padStart(2, '0');
+  const minutes = entryTime.getMinutes().toString().padStart(2, '0');
+  const time = `${hours}:${minutes}`;
+  
+  const side = backendTrade.direction?.toLowerCase() === 'short' ? 'short' : 'long';
+  
+  // Calculate duration in minutes if both times are available
+  let duration: number | undefined = undefined;
+  if (backendTrade.entry_time && backendTrade.exit_time) {
+    const entry = new Date(backendTrade.entry_time);
+    const exit = new Date(backendTrade.exit_time);
+    duration = Math.round((exit.getTime() - entry.getTime()) / (1000 * 60));
   }
   
-  return data;
+  return {
+    id: backendTrade.id,
+    date: date,
+    symbol: backendTrade.symbol,
+    side: side as 'long' | 'short',
+    entryPrice: backendTrade.entry_price,
+    exitPrice: backendTrade.exit_price,
+    quantity: backendTrade.quantity,
+    pnl: backendTrade.pnl,
+    riskReward: 1, // Default value, not in backend model
+    tags: backendTrade.trade_type ? [backendTrade.trade_type] : [],
+    notes: '', // Not in backend model
+    time: time,
+    screenshots: [],
+    account: backendTrade.acc_id,
+    duration: duration
+  };
+};
+
+// Fetch calendar data from backend
+const fetchCalendarData = async (year: number, month: number): Promise<DailyPnL[]> => {
+  try {
+    // Calculate the last day of the month
+    const daysInMonth = new Date(year, month, 0).getDate();
+    const startDate = `${year}-${month.toString().padStart(2, '0')}-01`;
+    const endDate = `${year}-${month.toString().padStart(2, '0')}-${daysInMonth.toString().padStart(2, '0')}`;
+    
+    const response = await fetch(`${API_URL}/api/pnl/daily?start_date=${startDate}&end_date=${endDate}`);
+    
+    if (!response.ok) {
+      throw new Error(`Failed to fetch calendar data: ${response.statusText}`);
+    }
+    
+    const data = await response.json();
+    
+    // Transform backend format to frontend format
+    const dailyData: DailyPnL[] = (data.data || []).map((day: any) => ({
+      date: day.date,
+      pnl: day.pnl || 0,
+      trades: (day.trades || []).map(transformBackendTradeToFrontend)
+    }));
+    
+    return dailyData;
+  } catch (error) {
+    console.error('Error fetching calendar data:', error);
+    return [];
+  }
 };
 
 const defaultRules: TradingRule[] = [
@@ -106,16 +131,8 @@ export default function App() {
   const [currentPage, setCurrentPage] = useState<PageType>('home');
   const [currentYear, setCurrentYear] = useState(2026);
   const [currentMonth, setCurrentMonth] = useState(1);
-  const [tradeData, setTradeData] = useState<DailyPnL[]>(() => {
-    // Generate January 2026 data
-    const jan2026 = generateMockData(2026, 1);
-    // Generate December 2025 data (last 6 days)
-    const dec2025 = generateMockData(2025, 12).filter(day => {
-      const dayNum = parseInt(day.date.split('-')[2]);
-      return dayNum >= 26; // Dec 26-31
-    });
-    return [...dec2025, ...jan2026];
-  });
+  const [tradeData, setTradeData] = useState<DailyPnL[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [showImportModal, setShowImportModal] = useState(false);
   const [showRulesPanel, setShowRulesPanel] = useState(false);
   const [showSettingsPanel, setShowSettingsPanel] = useState(false);
@@ -126,46 +143,97 @@ export default function App() {
     timezone: 'America/New_York'
   });
 
-  const handleMonthChange = (year: number, month: number) => {
-    setCurrentYear(year);
-    setCurrentMonth(month);
-    // In production, this would fetch data from your API
-    setTradeData(generateMockData(year, month));
+  // Helper function to load calendar data (avoid duplication)
+  const loadCalendarData = async (year: number, month: number) => {
+    setIsLoading(true);
+    try {
+      // Fetch current month and previous month (for calendar display)
+      const currentMonthData = await fetchCalendarData(year, month);
+      
+      // Also fetch previous month for calendar overflow days
+      let prevMonthData: DailyPnL[] = [];
+      if (month === 1) {
+        prevMonthData = await fetchCalendarData(year - 1, 12);
+      } else {
+        prevMonthData = await fetchCalendarData(year, month - 1);
+      }
+      
+      // Filter previous month to only last 6 days (for calendar overflow)
+      const prevMonthLastDays = prevMonthData.filter(day => {
+        const [dayYear, dayMonth, dayNum] = day.date.split('-').map(Number);
+        const isPrevMonth = month === 1 
+          ? (dayYear === year - 1 && dayMonth === 12)
+          : (dayYear === year && dayMonth === month - 1);
+        return isPrevMonth && dayNum >= 26;
+      });
+      
+      // Combine and deduplicate by date (in case of overlaps)
+      const combinedData = [...prevMonthLastDays, ...currentMonthData];
+      const uniqueByDate = new Map<string, DailyPnL>();
+      
+      combinedData.forEach(day => {
+        if (!uniqueByDate.has(day.date)) {
+          // First time seeing this date - deduplicate trades within this day
+          const uniqueTrades = new Map<string, Trade>();
+          day.trades.forEach(trade => {
+            if (!uniqueTrades.has(trade.id)) {
+              uniqueTrades.set(trade.id, trade);
+            }
+          });
+          uniqueByDate.set(day.date, {
+            ...day,
+            trades: Array.from(uniqueTrades.values()),
+            pnl: Array.from(uniqueTrades.values()).reduce((sum, t) => sum + t.pnl, 0)
+          });
+        } else {
+          // If duplicate date exists, merge trades and deduplicate
+          const existing = uniqueByDate.get(day.date)!;
+          const existingTradeIds = new Set(existing.trades.map(t => t.id));
+          const newTrades = day.trades.filter(t => !existingTradeIds.has(t.id));
+          if (newTrades.length > 0) {
+            console.warn(`Duplicate date ${day.date} found, merging ${newTrades.length} new trades`);
+            const allTrades = [...existing.trades, ...newTrades];
+            uniqueByDate.set(day.date, {
+              ...existing,
+              trades: allTrades,
+              pnl: allTrades.reduce((sum, t) => sum + t.pnl, 0)
+            });
+          }
+        }
+      });
+      
+      const finalData = Array.from(uniqueByDate.values());
+      console.log(`Loaded ${finalData.length} unique trading days with ${finalData.reduce((sum, d) => sum + d.trades.length, 0)} total trades`);
+      setTradeData(finalData);
+    } catch (error) {
+      console.error('Error loading trade data:', error);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
-  const handleImportTrades = (trades: Trade[]) => {
-    // Group trades by date
-    const tradesByDate = new Map<string, Trade[]>();
-    
-    trades.forEach(trade => {
-      const existing = tradesByDate.get(trade.date) || [];
-      tradesByDate.set(trade.date, [...existing, trade]);
-    });
+  // Fetch data when component mounts or month changes
+  useEffect(() => {
+    loadCalendarData(currentYear, currentMonth);
+  }, [currentYear, currentMonth]);
 
-    // Update trade data
-    const newData = [...tradeData];
-    tradesByDate.forEach((dayTrades, date) => {
-      const existingDayIndex = newData.findIndex(d => d.date === date);
-      const dayPnL = dayTrades.reduce((sum, t) => sum + t.pnl, 0);
-      
-      if (existingDayIndex >= 0) {
-        newData[existingDayIndex].trades.push(...dayTrades);
-        newData[existingDayIndex].pnl += dayPnL;
-      } else {
-        newData.push({
-          date,
-          pnl: dayPnL,
-          trades: dayTrades
-        });
-      }
-    });
+  const handleMonthChange = (year: number, month: number) => {
+    // Just update state - useEffect will handle the data loading
+    setCurrentYear(year);
+    setCurrentMonth(month);
+    // Don't fetch here - let useEffect handle it to avoid double-fetching
+  };
 
-    setTradeData(newData.sort((a, b) => a.date.localeCompare(b.date)));
+  const handleImportTrades = async () => {
+    // After import, refresh the data from backend
     setShowImportModal(false);
+    
+    // Reload current month data using the helper function
+    await loadCalendarData(currentYear, currentMonth);
   };
 
   const handleUpdateTrades = (date: string, updatedTrades: Trade[]) => {
-    const newData = tradeData.map(day => {
+    const newData = tradeData.map((day: DailyPnL) => {
       if (day.date === date) {
         const newPnL = updatedTrades.reduce((sum, t) => sum + t.pnl, 0);
         return { ...day, trades: updatedTrades, pnl: newPnL };
@@ -181,14 +249,25 @@ export default function App() {
         return <HomePage theme={settings.theme} onNavigate={setCurrentPage} />;
       case 'calendar':
         return (
-          <CalendarPage
-            tradeData={tradeData}
-            currentYear={currentYear}
-            currentMonth={currentMonth}
-            onMonthChange={handleMonthChange}
-            onUpdateTrades={handleUpdateTrades}
-            theme={settings.theme}
-          />
+          <>
+            {isLoading && (
+              <div className="p-8">
+                <div className={`text-center ${settings.theme === 'dark' ? 'text-[#E6EDF3]' : 'text-gray-900'}`}>
+                  <p>Loading calendar data...</p>
+                </div>
+              </div>
+            )}
+            {!isLoading && (
+              <CalendarPage
+                tradeData={tradeData}
+                currentYear={currentYear}
+                currentMonth={currentMonth}
+                onMonthChange={handleMonthChange}
+                onUpdateTrades={handleUpdateTrades}
+                theme={settings.theme}
+              />
+            )}
+          </>
         );
       case 'dashboard':
         return <DashboardPage data={tradeData} theme={settings.theme} />;
@@ -233,7 +312,7 @@ export default function App() {
   };
 
   return (
-    <div className={`flex h-screen ${settings.theme === 'dark' ? 'bg-[#0E1117]' : 'bg-gray-50'}`}>
+    <div className={`flex h-screen ${settings.theme === 'dark' ? 'bg-[#1C2333]' : 'bg-gray-50'}`}>
       {/* Sidebar */}
       <Sidebar
         currentPage={currentPage}

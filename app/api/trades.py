@@ -123,18 +123,34 @@ def import_trades_csv():
     1. Save all CSV rows to orders table (raw data)
     2. Optionally trigger matching (can be done separately)
     """
+    import sys
+    print("\n" + "="*80, file=sys.stderr)
+    print("🔍 DEBUG: CSV Import Started", file=sys.stderr)
+    print("="*80, file=sys.stderr)
+    
     try:
         # Get CSV data
         csv_text = None
+        print(f"📥 DEBUG: Request method = {request.method}", file=sys.stderr)
+        print(f"📥 DEBUG: Request content type = {request.content_type}", file=sys.stderr)
+        print(f"📥 DEBUG: Has files = {'file' in request.files}", file=sys.stderr)
+        print(f"📥 DEBUG: Is JSON = {request.is_json}", file=sys.stderr)
+        
         if 'file' in request.files:
             file = request.files['file']
             csv_text = file.read().decode("utf-8")
+            print(f"📥 DEBUG: Received CSV file, length = {len(csv_text)} chars", file=sys.stderr)
         elif request.is_json:
             data = request.get_json()
             csv_text = data.get('csv_text') or data.get('csv_data')
+            print(f"📥 DEBUG: Received JSON, csv_text length = {len(csv_text) if csv_text else 0} chars", file=sys.stderr)
+            print(f"📥 DEBUG: JSON keys = {list(data.keys()) if data else 'None'}", file=sys.stderr)
         
         if not csv_text:
-            return jsonify({'error': 'No CSV data provided'}), 400
+            print("❌ DEBUG: No CSV data found!", file=sys.stderr)
+            return jsonify({'error': 'No CSV data provided', 'debug': 'No csv_text or csv_data in request'}), 400
+        
+        print(f"✅ DEBUG: CSV text received, first 200 chars: {csv_text[:200]}", file=sys.stderr)
         
         # Get account
         account = "default"
@@ -143,41 +159,92 @@ def import_trades_csv():
         elif request.form:
             account = request.form.get('default_acc_id', account)
         
+        print(f"📋 DEBUG: Using account = {account}", file=sys.stderr)
+        
         # Step 1: Save raw orders to database
+        print(f"\n📦 DEBUG: Step 1 - Saving raw orders to database...", file=sys.stderr)
         from app.utils.csv_parser import save_raw_orders_to_db
         saved_orders, errors = save_raw_orders_to_db(csv_text, account)
+        
+        print(f"📦 DEBUG: Saved {len(saved_orders)} orders", file=sys.stderr)
+        print(f"📦 DEBUG: Encountered {len(errors)} errors/warnings", file=sys.stderr)
+        if errors:
+            print(f"📦 DEBUG: First 5 errors: {errors[:5]}", file=sys.stderr)
         
         # If no new orders were saved, this can still be a valid idempotent import
         # (e.g. user re-imported the same CSV). In that case, continue so matching
         # can still run on any previously-unmatched filled orders.
         if not saved_orders and not errors:
+            print("❌ DEBUG: No orders saved and no errors - CSV may be empty", file=sys.stderr)
             return jsonify({
                 'error': 'No orders were saved',
-                'errors': ['CSV parsed but produced no rows']
+                'errors': ['CSV parsed but produced no rows'],
+                'debug': 'CSV text length was 0 or parsing failed'
             }), 400
         
-        # Step 2: Optionally match orders (can be disabled)
+        # Step 2: Match filled orders into trades (position-based matching)
         auto_match = request.get_json().get('auto_match', True) if request.is_json else True
+        print(f"\n🔄 DEBUG: Step 2 - Matching orders to trades (auto_match={auto_match})...", file=sys.stderr)
         
         trades_created = 0
         created_trades = []
+        filled_count = 0
+        match_result = {}
+        
         if auto_match:
-            from app.services.order_matching import match_orders_to_trades
-            trades, match_summary = match_orders_to_trades(account=account)
-            trades_created = match_summary.get('trades_created', 0)
-            errors.extend(match_summary.get('errors', []))
-            created_trades = trades
+            from app.utils.csv_parser import process_filled_orders_to_trades
+            match_result = process_filled_orders_to_trades(account=account)
+            trades_created = match_result.get('trades_created', 0)
+            filled_count = match_result.get('filled_orders_count', 0)
+            errors.extend(match_result.get('errors', []))
+            
+            print(f"🔄 DEBUG: Matching result:", file=sys.stderr)
+            print(f"  - Filled orders found: {filled_count}", file=sys.stderr)
+            print(f"  - Trades created: {trades_created}", file=sys.stderr)
+            print(f"  - Errors: {len(match_result.get('errors', []))}", file=sys.stderr)
+            
+            # Get the created trades from database
+            if trades_created > 0:
+                # Query the most recently created trades (limit to 50 for response)
+                created_trades = Trade.query.order_by(Trade.exit_time.desc()).limit(50).all()
+                print(f"🔄 DEBUG: Retrieved {len(created_trades)} trades from database", file=sys.stderr)
+            else:
+                print(f"⚠️  DEBUG: No trades created! Check matching logic.", file=sys.stderr)
+                if match_result.get('errors'):
+                    print(f"⚠️  DEBUG: Matching errors: {match_result.get('errors')[:5]}", file=sys.stderr)
         
         # Return response
-        return jsonify({
-            'message': f'Imported {len(saved_orders)} new orders',
+        response_data = {
+            'message': f'Imported {len(saved_orders)} new orders, created {trades_created} trades',
             'orders_saved': len(saved_orders),
-            'orders_skipped': max(len(errors) - len(created_trades), 0),
             'trades_created': trades_created,
-            # Provide a sample of trades so the frontend can immediately render without refetching
-            'trades': [t.to_dict() for t in created_trades[:50]],
-            'errors': errors[:20]  # Limit errors in response
-        }), 201
+            'trades': [t.to_dict() for t in created_trades],
+            'errors': errors[:20],  # Limit errors in response
+            'debug_info': {
+                'filled_orders_count': filled_count,
+                'account_used': account,
+                'auto_match_enabled': auto_match
+            }
+        }
+        
+        # If no trades created but orders were saved, add helpful message
+        if trades_created == 0 and len(saved_orders) > 0:
+            response_data['warning'] = (
+                'Orders were saved but no trades were created. '
+                'This might mean there are no filled orders, or matching failed. '
+                'Check the errors array for details.'
+            )
+        
+        print(f"\n✅ DEBUG: Returning response:", file=sys.stderr)
+        print(f"  - orders_saved: {response_data['orders_saved']}", file=sys.stderr)
+        print(f"  - trades_created: {response_data['trades_created']}", file=sys.stderr)
+        print(f"  - trades in response: {len(response_data['trades'])}", file=sys.stderr)
+        print(f"  - errors: {len(response_data['errors'])}", file=sys.stderr)
+        if 'warning' in response_data:
+            print(f"  - WARNING: {response_data['warning']}", file=sys.stderr)
+        print("="*80 + "\n", file=sys.stderr)
+        
+        return jsonify(response_data), 201
         
     except Exception as e:
         db.session.rollback()
@@ -199,14 +266,17 @@ def match_orders():
     try:
         account = request.get_json().get('account') if request.is_json else None
         
-        from app.services.order_matching import match_orders_to_trades
-        trades, summary = match_orders_to_trades(account=account)
+        from app.utils.csv_parser import process_filled_orders_to_trades
+        match_result = process_filled_orders_to_trades(account=account)
+        
+        # Get created trades count
+        trades_created = match_result.get('trades_created', 0)
         
         return jsonify({
-            'message': f'Created {summary["trades_created"]} trades',
-            'trades_created': summary['trades_created'],
-            'unmatched_orders': summary['unmatched_orders'],
-            'errors': summary['errors']
+            'message': f'Created {trades_created} trades',
+            'trades_created': trades_created,
+            'filled_orders_count': match_result.get('filled_orders_count', 0),
+            'errors': match_result.get('errors', [])
         }), 200
         
     except Exception as e:
