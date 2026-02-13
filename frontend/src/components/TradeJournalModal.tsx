@@ -2,6 +2,11 @@ import { useState } from 'react';
 import { X, Plus, Tag } from 'lucide-react';
 import { Trade } from '../App';
 
+const API_URL = 'http://localhost:5001';
+
+// Preset tags that users can quickly select
+const PRESET_TAGS = ['ICT 22', 'Soup', 'Breakout', 'Scalp', 'Reversal', 'Trend Following', 'Mean Reversion'];
+
 interface TradeJournalModalProps {
   trade: Trade;
   onClose: () => void;
@@ -10,27 +15,62 @@ interface TradeJournalModalProps {
 }
 
 export function TradeJournalModal({ trade, onClose, onUpdate, theme }: TradeJournalModalProps) {
-  const [strategies, setStrategies] = useState<string[]>(trade.tags || []);
-  const [signals, setSignals] = useState<string>(trade.notes || '');
-  const [newStrategy, setNewStrategy] = useState('');
+  const [tags, setTags] = useState<string[]>(trade.tags || []);
+  const [notes, setNotes] = useState<string>(trade.notes || '');
+  const [customTag, setCustomTag] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
 
-  const handleSave = () => {
-    onUpdate({
-      tags: strategies,
-      notes: signals
-    });
-    onClose();
-  };
+  const handleSave = async () => {
+    setIsSaving(true);
+    try {
+      // Call backend API to save tags and notes
+      const response = await fetch(`${API_URL}/api/trades/${trade.id}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          tags: tags,
+          notes: notes
+        })
+      });
 
-  const handleAddStrategy = () => {
-    if (newStrategy.trim()) {
-      setStrategies([...strategies, newStrategy.trim()]);
-      setNewStrategy('');
+      if (!response.ok) {
+        throw new Error('Failed to save tags and notes');
+      }
+
+      const result = await response.json();
+      
+      // Update local state with the saved data
+      onUpdate({
+        tags: result.trade.tags || tags,
+        notes: result.trade.notes || notes
+      });
+      
+      onClose();
+    } catch (error) {
+      console.error('Error saving tags and notes:', error);
+      alert('Failed to save. Please try again.');
+    } finally {
+      setIsSaving(false);
     }
   };
 
-  const handleRemoveStrategy = (strategy: string) => {
-    setStrategies(strategies.filter(s => s !== strategy));
+  const handleAddCustomTag = () => {
+    if (customTag.trim() && !tags.includes(customTag.trim())) {
+      setTags([...tags, customTag.trim()]);
+      setCustomTag('');
+    }
+  };
+
+  const handleAddPresetTag = (tag: string) => {
+    if (!tags.includes(tag)) {
+      setTags([...tags, tag]);
+    }
+  };
+
+  const handleRemoveTag = (tagToRemove: string) => {
+    setTags(tags.filter(t => t !== tagToRemove));
   };
 
   const bgClass = theme === 'dark' ? 'bg-[#161B22]' : 'bg-white';
@@ -45,7 +85,7 @@ export function TradeJournalModal({ trade, onClose, onUpdate, theme }: TradeJour
         {/* Header */}
         <div className="bg-[#1E3A8A] text-white px-6 py-4 flex justify-between items-center">
           <div>
-            <h2 className="text-xl font-bold">Trade Journal</h2>
+            <h2 className="text-xl font-bold">Add Tags</h2>
             <p className="text-sm opacity-80 mt-1">{trade.symbol} - {trade.time}</p>
           </div>
           <button
@@ -58,38 +98,68 @@ export function TradeJournalModal({ trade, onClose, onUpdate, theme }: TradeJour
 
         {/* Content */}
         <div className="flex-1 overflow-auto p-6 space-y-6">
-          {/* Strategies Section */}
+          {/* Tags Section */}
           <div>
             <label className={`block text-sm font-semibold ${textClass} mb-3`}>
-              Strategies & Tags
+              Tags
             </label>
-            <div className="flex items-center gap-2 flex-wrap mb-3">
-              {strategies.map((strategy, idx) => (
-                <span
-                  key={idx}
-                  className="inline-flex items-center gap-1 px-3 py-1.5 bg-blue-100 text-blue-700 rounded-lg text-sm font-medium"
-                >
-                  {strategy}
-                  <button
-                    onClick={() => handleRemoveStrategy(strategy)}
-                    className="hover:text-blue-900"
+            
+            {/* Selected Tags */}
+            {tags.length > 0 && (
+              <div className="flex items-center gap-2 flex-wrap mb-4">
+                {tags.map((tag, idx) => (
+                  <span
+                    key={idx}
+                    className="inline-flex items-center gap-1 px-3 py-1.5 bg-blue-100 text-blue-700 rounded-lg text-sm font-medium"
                   >
-                    <X className="w-3.5 h-3.5" />
+                    {tag}
+                    <button
+                      onClick={() => handleRemoveTag(tag)}
+                      className="hover:text-blue-900"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+
+            {/* Preset Tags */}
+            <div className="mb-4">
+              <p className={`text-xs ${textSecondaryClass} mb-2`}>Quick Add:</p>
+              <div className="flex flex-wrap gap-2">
+                {PRESET_TAGS.map((presetTag) => (
+                  <button
+                    key={presetTag}
+                    onClick={() => handleAddPresetTag(presetTag)}
+                    disabled={tags.includes(presetTag)}
+                    className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                      tags.includes(presetTag)
+                        ? 'bg-gray-200 text-gray-500 cursor-not-allowed'
+                        : theme === 'dark'
+                        ? 'bg-[#2E3849] text-[#B0B8C8] hover:bg-[#404A5F]'
+                        : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                    }`}
+                  >
+                    <Tag className="w-3 h-3 inline mr-1" />
+                    {presetTag}
                   </button>
-                </span>
-              ))}
+                ))}
+              </div>
             </div>
+
+            {/* Custom Tag Input */}
             <div className="flex gap-2">
               <input
                 type="text"
-                value={newStrategy}
-                onChange={(e) => setNewStrategy(e.target.value)}
-                onKeyPress={(e) => e.key === 'Enter' && handleAddStrategy()}
-                placeholder="Add strategy (e.g., Breakout, Scalp, Reversal)"
+                value={customTag}
+                onChange={(e) => setCustomTag(e.target.value)}
+                onKeyPress={(e) => e.key === 'Enter' && handleAddCustomTag()}
+                placeholder="Type custom tag and press Enter"
                 className={`flex-1 px-3 py-2 border ${borderClass} rounded-lg ${theme === 'dark' ? 'bg-[#0E1117] text-white' : 'bg-white'}`}
               />
               <button
-                onClick={handleAddStrategy}
+                onClick={handleAddCustomTag}
                 className="px-4 py-2 bg-[#1E3A8A] text-white rounded-lg hover:bg-[#1e40af] transition-colors flex items-center gap-2"
               >
                 <Plus className="w-4 h-4" />
@@ -98,15 +168,15 @@ export function TradeJournalModal({ trade, onClose, onUpdate, theme }: TradeJour
             </div>
           </div>
 
-          {/* Signals & Notes Section */}
+          {/* Notes Section */}
           <div>
             <label className={`block text-sm font-semibold ${textClass} mb-3`}>
-              Entry Signals & Notes
+              Notes
             </label>
             <textarea
-              value={signals}
-              onChange={(e) => setSignals(e.target.value)}
-              placeholder="Describe what you saw before entering this trade... Key levels, patterns, indicators, market conditions, etc."
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="Add notes about this trade... Key levels, patterns, indicators, market conditions, etc."
               className={`w-full px-4 py-3 border ${borderClass} rounded-lg ${theme === 'dark' ? 'bg-[#0E1117] text-white' : 'bg-white'}`}
               rows={8}
             />
@@ -117,13 +187,15 @@ export function TradeJournalModal({ trade, onClose, onUpdate, theme }: TradeJour
         <div className={`border-t ${borderClass} px-6 py-4 ${cardBgClass} flex gap-3`}>
           <button
             onClick={handleSave}
-            className="flex-1 bg-[#1E3A8A] text-white py-2.5 rounded-lg hover:bg-[#1e40af] transition-colors font-medium"
+            disabled={isSaving}
+            className="flex-1 bg-[#1E3A8A] text-white py-2.5 rounded-lg hover:bg-[#1e40af] transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            Save Journal
+            {isSaving ? 'Saving...' : 'Save Tags'}
           </button>
           <button
             onClick={onClose}
-            className={`px-6 py-2.5 border ${borderClass} rounded-lg hover:${theme === 'dark' ? 'bg-[#1F2633]' : 'bg-gray-100'} transition-colors font-medium ${textClass}`}
+            disabled={isSaving}
+            className={`px-6 py-2.5 border ${borderClass} rounded-lg hover:${theme === 'dark' ? 'bg-[#1F2633]' : 'bg-gray-100'} transition-colors font-medium ${textClass} disabled:opacity-50 disabled:cursor-not-allowed`}
           >
             Cancel
           </button>

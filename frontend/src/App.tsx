@@ -81,8 +81,8 @@ export const transformBackendTradeToFrontend = (backendTrade: any): Trade => {
     quantity: backendTrade.quantity,
     pnl: backendTrade.pnl,
     riskReward: 1, // Default value, not in backend model
-    tags: backendTrade.trade_type ? [backendTrade.trade_type] : [],
-    notes: '', // Not in backend model
+    tags: backendTrade.tags || [], // Use tags array from backend
+    notes: backendTrade.notes || '', // Use notes from backend
     time: time,
     screenshots: [],
     account: backendTrade.acc_id,

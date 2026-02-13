@@ -104,7 +104,17 @@ def update_trade(trade_id):
             if data['trade_type'] not in allowed_types:
                 return jsonify({'errpr': f'Invalid trade type, must be from {allowed_types}'}), 400
             trade.trade_type = data['trade_type']
+        # update tags if provided
+        if 'tags' in data:
+            if isinstance(data['tags'], list):
+                trade.tags = data['tags']
+            else:
+                return jsonify({'error': 'tags must be an array'}), 400
 
+        # update notes if provided
+        if 'notes' in data:
+            trade.notes = data['notes']
+            
         db.session.commit()
 
         return jsonify({

@@ -281,7 +281,7 @@ export function TradeDetailModal({ dailyData, onClose, onUpdateTrades, onNavigat
                             className="inline-flex items-center gap-1 px-3 py-1.5 bg-[#1E3A8A] text-white rounded-lg hover:bg-[#1e40af] transition-colors text-xs font-medium"
                           >
                             <BookOpen className="w-3.5 h-3.5" />
-                            Journal
+                            Add Tags
                           </button>
                         </td>
                       </tr>

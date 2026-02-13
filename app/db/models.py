@@ -25,7 +25,8 @@ class Trade(db.Model):
     exit_orders = db.Column(db.JSON) # if mulitple exit orders
     is_scaled = db.Column(db.Boolean, default = False)
     fills = db.Column(db.JSON)  # All orders (entry + exit) in this trade as list of dicts
-
+    tags = db.Column(db.JSON)
+    notes = db.Column(db.Text)
 
     # convert trade object to dict
     def to_dict(self):
@@ -42,7 +43,9 @@ class Trade(db.Model):
             'pnl': float(self.pnl),
             'strategy': self.strategy,
             'trade_type': self.trade_type,
-            'fills': self.fills if self.fills else []  # List of order dicts
+            'fills': self.fills if self.fills else [],  # List of order dicts
+            'tags': self.tags if self.tags else [],  # Array of tag strings
+            'notes': self.notes if self.notes else None  # Free-form notes text
         }
 
 class Order(db.Model):
